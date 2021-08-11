@@ -70,13 +70,48 @@ void network_data_init(network_data_t *network_data, int server_port);
 class NetworkFrame
 {
 public:
-    /**
-     * @brief Sets the payload_size, type, GUID, and termination values.
+    enum class NetType
+    {
+        UNDEF,
+        POLL, // Used to be 'null' type.
+        ACK,
+        NACK,
+        DATA
+    };
+
+    enum class NetVertex
+    {
+        UNDEF,
+        CLIENT,
+        SERVER,
+        ROOFUHF,
+        ROOFXBAND,
+        HAYSTACK,
+        SERVOS
+    };
+
+    /** CONSTRUCTOR
+     * @brief Construct a new Network Frame object
      * 
-     * @param payload_size The desired payload size.
-     * @param type The type of data this frame will carry (see: NETWORK_FRAME_TYPE).
+     * @param payload 
+     * @param size 
+     * @param type 
+     * @param dest 
      */
-    NetworkFrame(NETWORK_FRAME_TYPE type, int payload_size);
+    NetworkFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex dest);
+
+    /** COPY CONSTRUCTOR
+     * @brief Copy a NetworkFrame object.
+     * 
+     * @param obj 
+     */
+    NetworkFrame(const NetworkFrame &obj);
+
+    /** DESTRUCTOR
+     * @brief Destroy the NetworkFrame object.
+     * 
+     */
+    ~NetworkFrame();
 
     /**
      * @brief Copies data to the payload.
@@ -90,7 +125,7 @@ public:
      * @param size Size of the data to be copied.
      * @return int Positive on success, negative on failure.
      */
-    int storePayload(NETWORK_FRAME_ENDPOINT endpoint, void *data, int size);
+    // int storePayload(NETWORK_FRAME_ENDPOINT endpoint, void *data, int size);
 
     /**
      * @brief Copies payload to the passed space in memory.
@@ -99,15 +134,7 @@ public:
      * @param size The size of the memory space being passed.
      * @return int Positive on success, negative on failure.
      */
-    int retrievePayload(unsigned char *data_space, int size);
-
-    int getPayloadSize() { return payload_size; };
-
-    NETWORK_FRAME_TYPE getType() { return type; };
-
-    NETWORK_FRAME_ENDPOINT getEndpoint() { return endpoint; };
-
-    uint8_t getNetstat() { return netstat; };
+    int retrievePayload(unsigned char *storage, ssize_t capacity);
 
     /**
      * @brief Checks the validity of itself.
@@ -129,17 +156,29 @@ public:
      */
     ssize_t sendFrame(network_data_t *network_data);
 
+    // These exist because 'setting' is managed.
+    NetType getType(){return type;};
+    NetVertex getOrigin(){return origin;};
+    NetVertex getDestination(){return destination;};
+    int getPayloadSize(){return payload_size;};
+    uint8_t getNetstat(){return netstat;};
+
 private:
-    uint16_t guid;                                         // 0x1A1C
-    NETWORK_FRAME_ENDPOINT endpoint;                       // Where is this going?
-    NETWORK_FRAME_MODE mode;                               // RX or TX
-    int payload_size;                                      // Variably sized payload, this value tracks the size.
-    NETWORK_FRAME_TYPE type;                               // NULL, ACK, NACK, CONFIG, DATA, STATUS
-    uint16_t crc1;                                         // CRC16 of payload.
-    unsigned char payload[NETWORK_FRAME_MAX_PAYLOAD_SIZE]; // Constant sized payload.
+    uint32_t guid;                                         // 0x1A1C1A1C
+
+    NetType type;
+    NetVertex origin;
+    NetVertex destination;
+
+    int payload_size;
+    // int payload_capacity? probably not needed - would like to malloc different sizes of payload, but this still isnt needed
+    uint16_t crc1;
+    unsigned char payload[NETWORK_FRAME_MAX_PAYLOAD_SIZE];
     uint16_t crc2;
-    uint8_t netstat;      // Network Status Information - Read by the client, set by the server: Bitmask - 0:Client, 1:RoofUHF, 2: RoofXB, 3: Haystack
-    uint16_t termination; // 0xAAAA
+
+    uint8_t netstat;
+
+    uint16_t termination;
 };
 
 /**
