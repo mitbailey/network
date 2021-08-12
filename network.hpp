@@ -16,132 +16,113 @@
 
 #define SERVER_POLL_RATE 5
 #define RECV_TIMEOUT 15
-#define NETWORK_FRAME_GUID 0x1A1C
+#define NETWORK_FRAME_GUID 0x1A1C1A1C
 #define NETWORK_FRAME_MAX_PAYLOAD_SIZE 0x100
 #define SERVER_IP "129.63.134.29" // hostname -I
 
-enum NETWORK_FRAME_TYPE
+enum class NetType
 {
-    CS_TYPE_ERROR = -1,       // Something is wrong.
-    CS_TYPE_NULL = 0,         // Blank, used for holding open the socket and retrieving status data.
-    CS_TYPE_ACK = 1,          // Good acknowledgement.
-    CS_TYPE_NACK = 2,         // Bad acknowledgement.
-    CS_TYPE_CONFIG_UHF = 3,   // Configure UHF radio.
-    CS_TYPE_CONFIG_XBAND = 4, // Configure X-Band radio.
-    CS_TYPE_DATA = 5,         // Most communications will be _DATA.
-    CS_TYPE_POLL_XBAND_CONFIG = 6,  // Asks radio for its config.
-    CS_TYPE_XBAND_COMMAND = 7,
+    UNDEF = -1,
+    POLL, // Used to be 'null' type.
+    ACK,
+    NACK,
+    UHF_CONFIG,
+    XBAND_CONFIG,
+    XBAND_COMMAND,
+    DATA
 };
 
-enum NETWORK_FRAME_ENDPOINT
+enum class NetVertex
 {
-    CS_ENDPOINT_ERROR = -1,
-    CS_ENDPOINT_CLIENT = 0,
-    CS_ENDPOINT_ROOFUHF,
-    CS_ENDPOINT_ROOFXBAND,
-    CS_ENDPOINT_HAYSTACK,
-    CS_ENDPOINT_SERVER
+    UNDEF = -1,
+    CLIENT,
+    ROOFUHF,
+    ROOFXBAND,
+    HAYSTACK,
+    SERVOS,
+    SERVER
 };
 
-enum NETWORK_FRAME_MODE
-{
-    CS_MODE_ERROR = -1,
-    CS_MODE_RX = 0,
-    CS_MODE_TX = 1
-};
-
-typedef struct
-{
-    // Network
-    int server_poll_rate;
-    int socket;
-    struct sockaddr_in serv_ip[1];
-    bool connection_ready;
-    char discon_reason[64];
-
-    // Booleans
-    bool rx_active; // Only able to receive when this is true.  
-
-    int thread_status;
-} network_data_t;
-
-void network_data_init(network_data_t *network_data, int server_port);
-
-class NetworkFrame
+class NetData
 {
 public:
-    enum class NetType
-    {
-        UNDEF,
-        POLL, // Used to be 'null' type.
-        ACK,
-        NACK,
-        DATA
-    };
+    int socket;
+    int thread_status;
+    bool connection_ready;
+    bool recv_active;
 
-    enum class NetVertex
-    {
-        UNDEF,
-        CLIENT,
-        SERVER,
-        ROOFUHF,
-        ROOFXBAND,
-        HAYSTACK,
-        SERVOS
-    };
+protected:
+    NetData();
+};
 
+class NetDataClients : public NetData
+{
+public:
+    NetDataClients(int server_port, int polling_rate);
+
+    int polling_rate; // Polling occurs once every this many seconds.
+    char disconnect_reason[64];
+    struct sockaddr_in server_ip[1];
+};
+
+class NetDataServer : public NetData
+{
+public:
+    NetDataServer(int listening_port);
+
+    int listening_port;
+};
+
+class NetFrame
+{
+public:
     /** CONSTRUCTOR
-     * @brief Construct a new Network Frame object
+     * @brief THROWS EXCEPTIONS. Construct a new NetworkFrame object
      * 
      * @param payload 
      * @param size 
      * @param type 
      * @param dest 
      */
-    NetworkFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex dest);
+    NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex destination);
+
+    // The copy constructor and destructor will only be needed if dynamic frame payload size is supported.
 
     /** COPY CONSTRUCTOR
      * @brief Copy a NetworkFrame object.
      * 
      * @param obj 
      */
-    NetworkFrame(const NetworkFrame &obj);
+    // NetFrame(const NetFrame &obj);
 
     /** DESTRUCTOR
      * @brief Destroy the NetworkFrame object.
      * 
      */
-    ~NetworkFrame();
-
-    /**
-     * @brief Copies data to the payload.
-     * 
-     * Returns and error if the passed data size does not equal the internal payload_size variable set during class construction.
-     * 
-     * Sets the CRC16s.
-     * 
-     * @param endpoint The final destination for the payload (see: NETWORK_FRAME_ENDPOINT).
-     * @param data Data to be copied into the payload.
-     * @param size Size of the data to be copied.
-     * @return int Positive on success, negative on failure.
-     */
-    // int storePayload(NETWORK_FRAME_ENDPOINT endpoint, void *data, int size);
+    // ~NetFrame();
 
     /**
      * @brief Copies payload to the passed space in memory.
      * 
-     * @param data_space Pointer to memory into which the payload is copied.
-     * @param size The size of the memory space being passed.
+     * @param storage Pointer to memory into which the payload is copied.
+     * @param capacity The size of the memory space being passed.
      * @return int Positive on success, negative on failure.
      */
     int retrievePayload(unsigned char *storage, ssize_t capacity);
+
+    /**
+     * @brief Sends itself using the network data passed to it.
+     * 
+     * @return ssize_t Number of bytes sent if successful, negative on failure. 
+     */
+    ssize_t sendFrame(NetData *network_data);
 
     /**
      * @brief Checks the validity of itself.
      * 
      * @return int Positive if valid, negative if invalid.
      */
-    int checkIntegrity();
+    int validate();
 
     /**
      * @brief Prints the class' data.
@@ -149,35 +130,26 @@ public:
      */
     void print();
 
-    /**
-     * @brief Sends itself using the network data passed to it.
-     * 
-     * @return ssize_t Number of bytes sent if successful, negative on failure. 
-     */
-    ssize_t sendFrame(network_data_t *network_data);
+    // This exists because 'setting' is restrictive.
+    int setNetstat(uint8_t netstat);
 
-    // These exist because 'setting' is managed.
-    NetType getType(){return type;};
-    NetVertex getOrigin(){return origin;};
-    NetVertex getDestination(){return destination;};
-    int getPayloadSize(){return payload_size;};
-    uint8_t getNetstat(){return netstat;};
+    // These exist because 'setting' is restrictive.
+    NetType getType(){ return type; };
+    NetVertex getOrigin(){ return origin; };
+    NetVertex getDestination(){ return destination; };
+    int getPayloadSize(){ return payload_size; };
+    uint8_t getNetstat(){ return netstat; };
 
 private:
     uint32_t guid;                                         // 0x1A1C1A1C
-
     NetType type;
     NetVertex origin;
     NetVertex destination;
-
     int payload_size;
-    // int payload_capacity? probably not needed - would like to malloc different sizes of payload, but this still isnt needed
     uint16_t crc1;
     unsigned char payload[NETWORK_FRAME_MAX_PAYLOAD_SIZE];
     uint16_t crc2;
-
     uint8_t netstat;
-
     uint16_t termination;
 };
 
@@ -192,24 +164,12 @@ private:
 void *gs_polling_thread(void *args);
 
 /**
- * @brief Packs data into a NetworkFrame and sends it.
- * 
- * @param network_data 
- * @param type 
- * @param endpoint 
- * @param data 
- * @param data_size 
- * @return int 
- */
-int gs_network_transmit(network_data_t *network_data, NETWORK_FRAME_TYPE type, NETWORK_FRAME_ENDPOINT endpoint, void *data, int data_size);
-
-/**
  * @brief 
  * 
  * @param network_data 
  * @return int 
  */
-int gs_connect_to_server(network_data_t *network_data);
+int gs_connect_to_server(NetData *network_data);
 
 /**
  * @brief 
