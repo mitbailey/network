@@ -43,6 +43,16 @@ enum class NetVertex
     SERVER
 };
 
+enum class NetPort
+{
+    UNDEF = -1,
+    CLIENT = 54200,
+    ROOFUHF = 54210,
+    ROOFXBAND = 54220,
+    HAYSTACK = 54230,
+    SERVOS = 54240
+};
+
 class NetData
 {
 public:
@@ -58,7 +68,7 @@ protected:
 class NetDataClients : public NetData
 {
 public:
-    NetDataClients(int server_port, int polling_rate);
+    NetDataClients(NetPort server_port, int polling_rate);
 
     int polling_rate; // Polling occurs once every this many seconds.
     char disconnect_reason[64];
@@ -68,7 +78,7 @@ public:
 class NetDataServer : public NetData
 {
 public:
-    NetDataServer(int listening_port);
+    NetDataServer(NetPort listening_port);
 
     int listening_port;
 };
@@ -145,7 +155,7 @@ private:
     NetType type;
     NetVertex origin;
     NetVertex destination;
-    int payload_size;
+    ssize_t payload_size;
     uint16_t crc1;
     unsigned char payload[NETWORK_FRAME_MAX_PAYLOAD_SIZE];
     uint16_t crc2;
@@ -169,7 +179,7 @@ void *gs_polling_thread(void *args);
  * @param network_data 
  * @return int 
  */
-int gs_connect_to_server(NetData *network_data);
+int gs_connect_to_server(NetDataClients *network_data);
 
 /**
  * @brief 

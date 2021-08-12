@@ -9,9 +9,7 @@
  * 
  */
 
-// #include <stdio.h>
 #include <cstdio>
-// #include <string.h>
 #include <cstring>
 #include <stdexcept>
 #include <unistd.h>
@@ -26,19 +24,19 @@ NetData::NetData()
     socket = -1;
 };
 
-NetDataClients::NetDataClients(int server_port, int polling_rate)
+NetDataClients::NetDataClients(NetPort server_port, int polling_rate)
 : NetData()
 {
     this->polling_rate = polling_rate;
     strcpy(disconnect_reason, "N/A");    
     server_ip->sin_family = AF_INET;
-    server_ip->sin_port = htons(server_port);
+    server_ip->sin_port = htons((int)server_port);
 };
 
-NetDataServer::NetDataServer(int listening_port)
+NetDataServer::NetDataServer(NetPort listening_port)
 : NetData()
 {
-    this->listening_port = listening_port;
+    this->listening_port = (int)listening_port;
 };
 
 NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex destination)
@@ -103,23 +101,25 @@ NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex
     else
     {
         dbprintlf(FATAL "GSNID not recognized. Please ensure one of the following exists:");
-        dbprintlf(FATAL "#define GSNID \"guiclient\"");
-        dbprintlf(FATAL "#define GSNID \"server\"");
-        dbprintlf(FATAL "#define GSNID \"roofuhf\"");
-        dbprintlf(FATAL "#define GSNID \"roofxband\"");
-        dbprintlf(FATAL "#define GSNID \"haystack\"");
-        dbprintlf(FATAL "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "#define GSNID \"guiclient\"");
+        dbprintlf(RED_FG "#define GSNID \"server\"");
+        dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
+        dbprintlf(RED_FG "#define GSNID \"roofxband\"");
+        dbprintlf(RED_FG "#define GSNID \"haystack\"");
+        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
         throw std::invalid_argument("GSNID not recognized.");
     }
 #endif
 #ifndef GSNID
         dbprintlf(FATAL "GSNID not defined. Please ensure one of the following exists:");
-        dbprintlf(FATAL "#define GSNID \"guiclient\"");
-        dbprintlf(FATAL "#define GSNID \"server\"");
-        dbprintlf(FATAL "#define GSNID \"roofuhf\"");
-        dbprintlf(FATAL "#define GSNID \"roofxband\"");
-        dbprintlf(FATAL "#define GSNID \"haystack\"");
-        dbprintlf(FATAL "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "#define GSNID \"guiclient\"");
+        dbprintlf(RED_FG "#define GSNID \"server\"");
+        dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
+        dbprintlf(RED_FG "#define GSNID \"roofxband\"");
+        dbprintlf(RED_FG "#define GSNID \"haystack\"");
+        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
         throw std::invalid_argument("GSNID not defined.");
 #endif
 
@@ -138,7 +138,7 @@ int NetFrame::retrievePayload(unsigned char *storage, ssize_t capacity)
 {
     if (capacity < payload_size)
     {
-        dbprintlf("Capacity less than payload size (%d < %d).\n", capacity, payload_size);
+        dbprintlf("Capacity less than payload size (%ld < %ld).\n", capacity, payload_size);
         return -1;
     }
 
@@ -221,7 +221,7 @@ void NetFrame::print()
     dbprintlf("Type ------------ %d\n", (int)type);
     dbprintlf("Destination ----- %d\n", (int)destination);
     dbprintlf("Origin ---------- %d\n", (int)origin);
-    dbprintlf("Payload Size ---- %d\n", payload_size);
+    dbprintlf("Payload Size ---- %ld\n", payload_size);
     dbprintlf("CRC1 ------------ 0x%04x\n", crc1);
     dbprintf("Payload ---- (HEX)");
     for (int i = 0; i < payload_size; i++)
@@ -250,12 +250,13 @@ int NetFrame::setNetstat(uint8_t netstat)
 #endif
 
     dbprintlf(FATAL "GSNID not defined. Please ensure one of the following exists:");
-    dbprintlf(FATAL "#define GSNID \"guiclient\"");
-    dbprintlf(FATAL "#define GSNID \"server\"");
-    dbprintlf(FATAL "#define GSNID \"roofuhf\"");
-    dbprintlf(FATAL "#define GSNID \"roofxband\"");
-    dbprintlf(FATAL "#define GSNID \"haystack\"");
-    dbprintlf(FATAL "#define GSNID \"servos\"");
+    dbprintlf(RED_FG "#define GSNID \"guiclient\"");
+    dbprintlf(RED_FG "#define GSNID \"server\"");
+    dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
+    dbprintlf(RED_FG "#define GSNID \"roofxband\"");
+    dbprintlf(RED_FG "#define GSNID \"haystack\"");
+    dbprintlf(RED_FG "#define GSNID \"servos\"");
+    dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
     return -1;
 }
 
@@ -269,14 +270,30 @@ void *gs_polling_thread(void *args)
     {
         if (network_data->connection_ready)
         {
-            NetFrame *polling_frame = new NetFrame(NULL, 0, NetType::POLL, NetVertex::SERVER));
+            NetFrame *polling_frame = new NetFrame(NULL, 0, NetType::POLL, NetVertex::SERVER);
             polling_frame->sendFrame(network_data);
             delete polling_frame;
         }
         else
         {
-            // Get our GS Network connection back up and running.
-            gs_connect_to_server(network_data);
+#ifdef GSNID
+            // Disables automatic reconnection for the GUI Client and Server.
+            if (strcmp(GSNID, "guiclient") != 0 && strcmp(GSNID, "server") != 0)
+            {
+                // Get our GS Network connection back up and running.
+                gs_connect_to_server(network_data);
+            }
+#endif
+#ifndef GSNID
+        dbprintlf(FATAL "GSNID not defined. Please ensure one of the following exists:");
+        dbprintlf(RED_FG "#define GSNID \"guiclient\"");
+        dbprintlf(RED_FG "#define GSNID \"server\"");
+        dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
+        dbprintlf(RED_FG "#define GSNID \"roofxband\"");
+        dbprintlf(RED_FG "#define GSNID \"haystack\"");
+        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
+#endif
         }
         usleep(network_data->polling_rate * 1000000);
     }
