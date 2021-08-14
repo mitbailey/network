@@ -94,9 +94,9 @@ NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex
     {
         origin = NetVertex::HAYSTACK;
     }
-    else if (strcmp(GSNID, "servos") == 0)
+    else if (strcmp(GSNID, "track") == 0)
     {
-        origin = NetVertex::SERVOS;
+        origin = NetVertex::track;
     }
     else
     {
@@ -106,7 +106,7 @@ NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex
         dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
         dbprintlf(RED_FG "#define GSNID \"roofxband\"");
         dbprintlf(RED_FG "#define GSNID \"haystack\"");
-        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "#define GSNID \"track\"");
         dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
         throw std::invalid_argument("GSNID not recognized.");
     }
@@ -118,7 +118,7 @@ NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex
         dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
         dbprintlf(RED_FG "#define GSNID \"roofxband\"");
         dbprintlf(RED_FG "#define GSNID \"haystack\"");
-        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "#define GSNID \"track\"");
         dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
         throw std::invalid_argument("GSNID not defined.");
 #endif
@@ -255,7 +255,7 @@ int NetFrame::setNetstat(uint8_t netstat)
     dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
     dbprintlf(RED_FG "#define GSNID \"roofxband\"");
     dbprintlf(RED_FG "#define GSNID \"haystack\"");
-    dbprintlf(RED_FG "#define GSNID \"servos\"");
+    dbprintlf(RED_FG "#define GSNID \"track\"");
     dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
     return -1;
 }
@@ -291,7 +291,7 @@ void *gs_polling_thread(void *args)
         dbprintlf(RED_FG "#define GSNID \"roofuhf\"");
         dbprintlf(RED_FG "#define GSNID \"roofxband\"");
         dbprintlf(RED_FG "#define GSNID \"haystack\"");
-        dbprintlf(RED_FG "#define GSNID \"servos\"");
+        dbprintlf(RED_FG "#define GSNID \"track\"");
         dbprintlf(RED_FG "Or, in a Makefile: -DGSNID=\\\"guiclient\\\"");
 #endif
         }
