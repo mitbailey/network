@@ -101,6 +101,15 @@ void NetData::close_ssl_conn()
     DestroySSL();
 }
 
+void NetData::Close()
+{
+    if (ssl_ready)
+        close_ssl_conn();
+    connection_ready = false;
+    close(_socket);
+    _socket = -1;
+}
+
 NetDataClient::NetDataClient(const char *ip_addr, NetPort server_port, NetVertex vertex, int polling_rate, sha1_hash_t auth_token)
     : NetData()
 {
