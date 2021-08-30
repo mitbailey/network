@@ -4,10 +4,11 @@ EDCFLAGS = -I ./ -Wall -std=c11 -Wno-deprecated-declarations $(CFLAGS)
 EDCXXFLAGS = -I./ -Wall -std=c++11 -Wno-deprecated-declarations $(CXXFLAGS)
 EDLDFLAGS = -lpthread -lm -lssl -lcrypto $(LDFLAGS)
 
-CXXOBJS = network.o
+CXXOBJS = network.o \
+			sha_digest.o
 
 all: $(CXXOBJS)
-	ar -crus libnetwork.a network.o
+	ar -crus libnetwork.a $(CXXOBJS)
 
 %.o: %.cpp
 	$(CXX) $(EDCXXFLAGS) -o $@ -c $<

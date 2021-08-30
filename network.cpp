@@ -212,6 +212,22 @@ void NetDataServer::_NetDataServer(NetPort listening_port, int clients)
     }
 };
 
+NetClient *NetDataServer::GetClient(int id)
+{
+    if (id < 0 || id > num_clients)
+        return nullptr;
+    return &(clients[id]);
+}
+
+NetClient *NetDataServer::GetClient(NetVertex target)
+{
+    NetClient *ret = nullptr;
+    for (int i = 0; i < num_clients; i++)
+        if (clients[i].self == target)
+            ret = &(clients[i]);
+    return ret;
+}
+
 NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex destination) : payload(nullptr), payload_size(0)
 {
     if (payload == nullptr || size == 0 || type == NetType::POLL)
