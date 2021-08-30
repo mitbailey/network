@@ -90,6 +90,8 @@ private:
     sha1_hash_t *auth_token = nullptr;
     char ip_addr[16];
 
+    int open_ssl_conn();
+
 public:
     NetDataClient(const char *ip_addr, NetPort server_port, NetVertex vertex, int polling_rate, sha1_hash_t auth_token);
     sha1_hash_t *GetAuthToken() { return auth_token; };
