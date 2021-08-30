@@ -123,6 +123,7 @@ int NetDataClient::open_ssl_conn()
         int ssl_err = SSL_connect(cssl);
         if (ssl_err <= 0)
         {
+            dbprintlf("SSL error %d", ssl_err);
             close_ssl_conn();
             return -1;
         }
@@ -137,6 +138,10 @@ NetDataClient::NetDataClient(const char *ip_addr, NetPort server_port, NetVertex
 {
     ;
     ctx = InitializeSSLClient();
+    if (ctx == NULL)
+    {
+        dbprintlf("Could not initialize SSL context for the client");
+    }
     if (ip_addr == NULL)
         strcpy(this->ip_addr, "127.0.0.1");
     else
