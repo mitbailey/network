@@ -832,6 +832,8 @@ int gs_accept(NetDataServer *serv, int client_id)
         return -1;
     }
 
+    usleep(10000);
+
     // Receive auth token
     NetFrame *frame = new NetFrame();
     int retval;
@@ -843,6 +845,8 @@ int gs_accept(NetDataServer *serv, int client_id)
     }
 
     client->self = frame->getOrigin();
+
+    frame->print();
 
     if (retval <= 0)
     {
@@ -930,9 +934,9 @@ int gs_accept_ssl(NetData *client)
         dbprintlf("Connection to client %p already over SSL", client);
         return 1;
     }
-    else if (!client->ssl_ready)
+    else if (client->ssl_ready)
     {
-        dbprintlf("SSL not ready");
+        dbprintlf("SSL ready");
         return 1;
     }
     client->ctx = InitializeSSLServer();
@@ -947,12 +951,13 @@ int gs_accept_ssl(NetData *client)
         dbprintlf(FATAL "Could not allocate SSL connection");
         return -2;
     }
-    if (!SSL_set_fd(client->cssl, client->_socket))
+    if (SSL_set_fd(client->cssl, client->_socket) == 0)
     {
         dbprintlf("Could not attach C socket to SSL socket");
         client->close_ssl_conn();
         return -3;
     }
+    SSL_set_accept_state(client->cssl);
     int accept_retval = 0;
     for (int i = 0; i < 100; i++)
     {
