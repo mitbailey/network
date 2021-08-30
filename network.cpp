@@ -110,6 +110,28 @@ void NetData::Close()
     _socket = -1;
 }
 
+int NetDataClient::open_ssl_conn()
+{
+    if (ctx != NULL && connection_ready)
+    {
+        cssl = SSL_new(ctx);
+        if (!SSL_set_fd(cssl, _socket))
+        {
+            dbprintlf("Could not open SSL connection");
+            return -1;
+        }
+        int ssl_err = SSL_connect(cssl);
+        if (ssl_err <= 0)
+        {
+            close_ssl_conn();
+            return -1;
+        }
+        ssl_ready = true;
+        return 1;
+    }
+    return -1;
+}
+
 NetDataClient::NetDataClient(const char *ip_addr, NetPort server_port, NetVertex vertex, int polling_rate, sha1_hash_t auth_token)
     : NetData()
 {
@@ -1049,6 +1071,14 @@ int gs_connect_to_server(NetDataClient *network_data)
         setsockopt(network_data->_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof timeout);
 
         network_data->connection_ready = true;
+
+        if (network_data->open_ssl_conn() < 0)
+        {
+            dbprintlf("Could not open SSL connection\n");
+            network_data->Close();
+            return -5;
+        }
+
         connect_status = 1;
 
         NetFrame *frame = new NetFrame((uint8_t *)network_data->GetAuthToken()->GetBytes(), SHA512_DIGEST_LENGTH, NetType::SRV, NetVertex::SERVER);
