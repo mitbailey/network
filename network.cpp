@@ -18,27 +18,189 @@
 #include <fcntl.h>
 #include "network.hpp"
 #include "meb_debug.hpp"
+#include <openssl/err.h>
+#include <assert.h>
+
+static int ssl_lib_init = 0;
+
+void InitializeSSLLibrary()
+{
+    if (ssl_lib_init++ == 0)
+    {
+        SSL_load_error_strings();
+        SSL_library_init();
+        OpenSSL_add_all_algorithms();
+    }
+}
+
+SSL_CTX *InitializeSSLServer(void)
+{
+    InitializeSSLLibrary();
+    SSL_CTX *ctx = SSL_CTX_new(SSLv23_server_method());
+    if (ctx == NULL)
+    {
+        dbprintlf(FATAL "Could create SSL context");
+        return NULL;
+    }
+    int use_cert = SSL_CTX_use_certificate_file(ctx, "./cert.pem", SSL_FILETYPE_PEM);
+    int use_prv = SSL_CTX_use_PrivateKey_file(ctx, "./key.pem", SSL_FILETYPE_PEM);
+    if ((use_cert != 1) || (use_prv != 1) || (SSL_CTX_check_private_key(ctx) != 1))
+    {
+        dbprintlf("Cert: %d, Private Key: %d, Validation: %d", use_cert, use_prv, SSL_CTX_check_private_key(ctx));
+        return NULL;
+    }
+    SSL_CTX_set_dh_auto(ctx, 1);
+    return ctx;
+}
+
+SSL_CTX *InitializeSSLClient(void)
+{
+    InitializeSSLLibrary();
+    SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
+    if (ctx == NULL)
+    {
+        dbprintlf(FATAL "Could create SSL context");
+    }
+    else
+    {
+        SSL_CTX_set_dh_auto(ctx, 1);
+    }
+    return ctx;
+}
+
+void DestroySSL()
+{
+    assert(ssl_lib_init >= 0);
+    if (--ssl_lib_init == 0)
+    {
+        ERR_free_strings();
+        EVP_cleanup();
+    }
+}
 
 NetData::NetData()
 {
     connection_ready = false;
-    socket = -1;
+    _socket = -1;
 };
 
-NetDataClient::NetDataClient(NetPort server_port, int polling_rate)
+void NetData::close_ssl_conn()
+{
+    if (cssl != NULL)
+    {
+        ssl_ready = false;
+        SSL_shutdown(cssl);
+        SSL_free(cssl);
+        cssl = NULL;
+    }
+    if (ctx != NULL)
+    {
+        SSL_CTX_free(ctx);
+        ctx = NULL;
+    }
+    DestroySSL();
+}
+
+NetDataClient::NetDataClient(const char *ip_addr, NetPort server_port, NetVertex vertex, int polling_rate, sha1_hash_t auth_token)
     : NetData()
 {
     ;
+    ctx = InitializeSSLClient();
+    if (ip_addr == NULL)
+        strcpy(this->ip_addr, "127.0.0.1");
+    else
+    {
+        strncpy(this->ip_addr, ip_addr, sizeof(this->ip_addr));
+    }
     this->polling_rate = polling_rate;
     strcpy(disconnect_reason, "N/A");
     server_ip->sin_family = AF_INET;
     server_ip->sin_port = htons((int)server_port);
+    self = vertex;
+    this->auth_token = new sha1_hash_t;
+    this->auth_token->copy(&auth_token);
 };
 
-NetDataServer::NetDataServer(NetPort listening_port)
-    : NetData()
+NetDataServer::NetDataServer(NetPort listening_port, int clients, sha1_hash_t auth_token)
 {
-    this->listening_port = (int)listening_port;
+    this->auth_token = new sha1_hash_t();
+    InitializeSSLLibrary();
+    _NetDataServer(listening_port, clients);
+    this->auth_token->copy(&auth_token);
+}
+
+void *gs_accept_thread(void *args);
+
+void NetDataServer::_NetDataServer(NetPort listening_port, int clients)
+{
+    srand(time(NULL));
+    if (clients < 1)
+        clients = 1;
+    else if (clients > 100)
+        clients = 100;
+
+    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 3)
+    {
+        dbprintlf("Socket creation failed");
+        throw std::bad_alloc();
+    }
+    int opt = 1;
+    // Forcefully attaching socket to the port 8080
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR,
+                   &opt, sizeof(opt)))
+    {
+        dbprintlf("setsockopt reuseaddr");
+        throw std::invalid_argument("setsockopt reuseaddr");
+    }
+
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT,
+                   &opt, sizeof(opt)))
+    {
+        dbprintlf("setsockopt reuseport");
+        throw std::invalid_argument("setsockopt reuseport");
+    }
+
+    int flags = fcntl(fd, F_GETFL, 0);
+    assert(flags != -1);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    // Forcefully attaching socket to the port 8080
+    struct sockaddr_in address;
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons((int) listening_port);
+
+    if (bind(fd, (struct sockaddr *)&address,
+             sizeof(address)) < 0)
+    {
+        dbprintlf("bind failed");
+        throw std::invalid_argument("bind failed");
+    }
+    if (listen(fd, clients) < 0)
+    {
+        dbprintlf("listen");
+        throw std::invalid_argument("listen");
+    }
+
+    this->num_clients = clients;
+    this->clients = new NetClient[clients];
+
+    if (this->clients == nullptr)
+    {
+        dbprintlf("Could not allocate memory for clients");
+        throw std::bad_alloc();
+    }
+
+    for (int i = 0; i < clients; i++)
+    {
+        this->clients[i].client_id = i;
+        this->clients[i].serv = this;
+    }
+
+    if (pthread_create(&accept_thread, NULL, gs_accept_thread, this) != 0)
+    {
+        dbprintlf("Could not start accept thread");
+    }
 };
 
 NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex destination) : payload(nullptr), payload_size(0)
@@ -52,13 +214,13 @@ NetFrame::NetFrame(unsigned char *payload, ssize_t size, NetType type, NetVertex
         }
     }
 
-    if ((int)type < (int)NetType::POLL || (int)type > (int)NetType::SW_UPDATE)
+    if ((int)type < (int)NetType::POLL || (int)type >= (int)NetType::MAX)
     {
         dbprintlf(FATAL "Invalid or unknown NetType.");
         throw std::invalid_argument("Invalid or unknown NetType.");
     }
 
-    if ((int)destination < (int)NetVertex::CLIENT || (int)destination > (int)NetVertex::SERVER)
+    if ((int)destination < (int)NetVertex::CLIENT || (int)destination >= (int)NetVertex::MAX)
     {
         dbprintlf("Invalid or unknown NetVertex.");
         throw std::invalid_argument("Invalid or unknown NetVertex.");
@@ -183,9 +345,9 @@ ssize_t NetFrame::sendFrame(NetData *network_data)
         return -1;
     }
 
-    if (network_data->socket < 0)
+    if (network_data->_socket < 0)
     {
-        dbprintlf(RED_FG "Invalid socket (%d).", network_data->socket);
+        dbprintlf(RED_FG "Invalid socket (%d).", network_data->_socket);
         return -1;
     }
 
@@ -239,7 +401,10 @@ ssize_t NetFrame::sendFrame(NetData *network_data)
     // Set frame_size to malloc_size, the bytes allocated for the sendable buffer, to track how many bytes should send.
     this->frame_size = malloc_size;
 
-    send_size = send(network_data->socket, buffer, malloc_size, 0);
+    if (!network_data->ssl_ready)
+        send_size = send(network_data->_socket, buffer, malloc_size, 0);
+    else
+        send_size = SSL_write(network_data->cssl, buffer, malloc_size);
 
     free(buffer);
 
@@ -254,9 +419,9 @@ ssize_t NetFrame::recvFrame(NetData *network_data)
         return -1;
     }
 
-    if (network_data->socket < 0)
+    if (network_data->_socket < 0)
     {
-        dbprintlf(RED_FG "Invalid socket (%d).", network_data->socket);
+        dbprintlf(RED_FG "Invalid socket (%d).", network_data->_socket);
         return -1;
     }
 
@@ -267,7 +432,11 @@ ssize_t NetFrame::recvFrame(NetData *network_data)
 
     do
     {
-        int sz = recv(network_data->socket, header.bytes + offset, 1, MSG_WAITALL);
+        int sz;
+        if (!network_data->ssl_ready) 
+            sz = recv(network_data->_socket, header.bytes + offset, 1, MSG_WAITALL);
+        else
+            sz = SSL_read(network_data->cssl, header.bytes + offset, 1);
         if (sz < 0)
         {
             // Connection broken.
@@ -296,7 +465,11 @@ ssize_t NetFrame::recvFrame(NetData *network_data)
     // Receive the rest of the header.
     do
     {
-        int sz = recv(network_data->socket, header.bytes + offset, sizeof(NetFrameHeader) - offset, MSG_WAITALL);
+        int sz;
+        if (!network_data->ssl_ready) 
+            sz = recv(network_data->_socket, header.bytes + offset, sizeof(NetFrameHeader) - offset, MSG_WAITALL);
+        else
+            sz = SSL_read(network_data->cssl, header.bytes + offset, sizeof(NetFrameHeader) - offset);
         if (sz < 0)
             break;
         if (sz == 0)
@@ -349,7 +522,11 @@ ssize_t NetFrame::recvFrame(NetData *network_data)
     // Receive the payload.
     do
     {
-        int sz = recv(network_data->socket, this->payload + offset, payload_buffer_size - offset, MSG_WAITALL);
+        int sz;
+        if (!network_data->ssl_ready) 
+            sz = recv(network_data->_socket, this->payload + offset, payload_buffer_size - offset, MSG_WAITALL);
+        else
+            sz = SSL_read(network_data->cssl, this->payload + offset, payload_buffer_size - offset);
         if (sz < 0)
         {
             // Connection broken mid-receive-payload.
@@ -375,7 +552,11 @@ ssize_t NetFrame::recvFrame(NetData *network_data)
     // Receive the footer.
     do
     {
-        int sz = recv(network_data->socket, footer.bytes + offset, sizeof(NetFrameFooter) - offset, MSG_WAITALL);
+        int sz;
+        if (!network_data->ssl_ready) 
+            sz = recv(network_data->_socket, footer.bytes + offset, sizeof(NetFrameFooter) - offset, MSG_WAITALL);
+        else
+            sz = SSL_read(network_data->cssl, footer.bytes + offset, sizeof(NetFrameFooter) - offset);
         if (sz < 0)
         {
             // Connection broken.
@@ -415,7 +596,7 @@ int NetFrame::validate()
     {
         return -1;
     }
-    else if ((int)type < (int)NetType::POLL || (int)type > (int)NetType::SW_UPDATE)
+    else if ((int)type < (int)NetType::POLL || (int)type >= (int)NetType::MAX)
     {
         return -2;
     }
@@ -427,7 +608,7 @@ int NetFrame::validate()
             return -3;
         }
     }
-    else if ((int)origin < (int)NetVertex::CLIENT || (int)origin > (int)NetVertex::TRACK)
+    else if ((int)origin < (int)NetVertex::CLIENT || (int)origin >= (int)NetVertex::MAX)
     {
         return -4;
     }
@@ -571,25 +752,247 @@ void *gs_polling_thread(void *args)
     return nullptr;
 }
 
+void *gs_accept_thread(void *args)
+{
+    NetDataServer *serv = (NetDataServer *)args;
+    while (!serv->listen_done)
+    {
+        for (int i = 0; i < serv->num_clients; i++)
+        {
+            gs_accept(serv, i);
+        }
+        sleep(1);
+    }
+    return NULL;
+}
+
+int gs_accept_ssl(NetData *client);
+
+int gs_accept(NetDataServer *serv, int client_id)
+{
+    // check if client ID is valid
+    if (client_id >= serv->num_clients)
+    {
+        dbprintlf("Invalid client ID, max clients %d", serv->num_clients);
+        return -1;
+    }
+    // get local pointer to client referenced by ID
+    NetClient *client = serv->GetClient(client_id);
+    // check if connection already available
+    if (client->connection_ready)
+    {
+        return client->_socket;
+    }
+    // if not connected
+    if (client->_socket <= 0)
+    {
+        client->client_addrlen = sizeof(struct sockaddr_in);
+        client->_socket = accept(serv->fd, (struct sockaddr *)&(client->client_addr), (socklen_t *)&(client->client_addrlen)); // accept request
+    }
+    if (client->_socket <= 0) // connection attempt unsuccessful
+        return client->_socket;
+
+    client->connection_ready = true;
+    int set = 1;
+    // set socket option to not generate sigpipe if connection is broken
+#ifndef __linux__
+    setsockopt(client->_socket, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
+#endif
+
+    // accept SSL connection
+    if (gs_accept_ssl(client) < 0)
+    {
+        dbprintlf("Could not accept SSL connection");
+        client->Close();
+        return -1;
+    }
+
+    // Receive auth token
+    NetFrame *frame = new NetFrame();
+    int retval;
+    for (int i = 0; i < 20; i++)
+    {
+        retval = frame->recvFrame(client);
+        if (retval > 0)
+            break;
+    }
+
+    client->self = frame->getOrigin();
+
+    if (retval <= 0)
+    {
+        dbprintlf("Could not receive frame for auth token check");
+        client->Close();
+        return -1;
+    }
+
+    // if authentication token
+    NetType ret = NetType::NACK;
+    if (frame->getType() == NetType::SRV && frame->getDestination() == NetVertex::SERVER)
+    {
+        sha1_hash_t auth;
+        if (!ssl_lib_init)
+        {
+            dbprintlf(RED_FG "SSL Library not initialized");
+        }
+        else if (serv->GetAuthToken() == nullptr)
+        {
+            dbprintlf(RED_FG "Authentication token null");
+        }
+        else if (serv->GetAuthToken()->valid() == false)
+        {
+            dbprintlf(RED_FG "Authentication token not set up");
+        }
+        else if (frame->getPayloadSize() != sizeof(sha1_hash_t))
+        {
+            dbprintlf(RED_FG "Authentication token size invalid");
+        }
+        else if (frame->retrievePayload((uint8_t *) auth.GetBytes(), sizeof(auth)) < 0)
+        {
+            dbprintlf(RED_FG "Could not obtain authentication token\n");
+        }
+        else if (*(serv->GetAuthToken()) != auth)
+        {
+            dbprintlf(RED_FG "Authentication token mismatch");
+        }
+        else
+        {
+            ret = NetType::ACK;
+        }
+        delete frame;
+    }
+    else
+    {
+        // hang up
+        // TODO: Black list IP address
+        delete frame;
+        dbprintlf("Could not receive frame for auth token check");
+        client->Close();
+        return -1;
+    }
+
+    frame = new NetFrame((uint8_t *) &ret, sizeof(NetType), ret, client->self);
+    int bytes = frame->sendFrame(client);
+    delete frame;
+
+    if (ret == NetType::NACK)
+    {
+        dbprintlf("Could not authenticate client");
+        client->Close();
+        return -1;
+    }
+
+    if (bytes <= 0)
+    {
+        dbprintlf("Cound not send vertex identifiers, closing connection");
+        delete frame;
+        client->Close();
+        return -1;
+    }
+
+    return 1;
+}
+
+int gs_accept_ssl(NetData *client)
+{
+    if (client->server)
+    {
+        dbprintlf("Function not applicable on a server");
+        return -100;
+    }
+    if (client->cssl != NULL)
+    {
+        dbprintlf("Connection to client %p already over SSL", client);
+        return 1;
+    }
+    else if (!client->ssl_ready)
+    {
+        dbprintlf("SSL not ready");
+        return 1;
+    }
+    client->ctx = InitializeSSLServer();
+    if (client->ctx == NULL)
+    {
+        dbprintlf(FATAL "Could not initialize SSL context for the client");
+        return -1;
+    }
+    client->cssl = SSL_new(client->ctx);
+    if (client->cssl == NULL)
+    {
+        dbprintlf(FATAL "Could not allocate SSL connection");
+        return -2;
+    }
+    if (!SSL_set_fd(client->cssl, client->_socket))
+    {
+        dbprintlf("Could not attach C socket to SSL socket");
+        client->close_ssl_conn();
+        return -3;
+    }
+    int accept_retval = 0;
+    for (int i = 0; i < 100; i++)
+    {
+        accept_retval = SSL_accept(client->cssl);
+        if (accept_retval == 0)
+        {
+            break;
+        }
+        else if (accept_retval == -1)
+        {
+            int err = SSL_get_error(client->cssl, accept_retval);
+            if (err == SSL_ERROR_WANT_READ)
+            {
+                usleep(10000);
+            }
+            else if (err == SSL_ERROR_WANT_WRITE)
+            {
+                usleep(10000);
+            }
+            else if (err == SSL_ERROR_SYSCALL || err == SSL_ERROR_SSL)
+            {
+                dbprintlf("Error syscall / ssl");
+                break;
+            }
+            else if (err == SSL_ERROR_ZERO_RETURN)
+            {
+                dbprintlf("Error return zero");
+                break;
+            }
+        }
+        else
+        {
+            /* Continue */
+            break;
+        }
+    }
+    if (accept_retval < 0)
+    {
+        dbprintlf("Accept failed on SSL");
+        ERR_print_errors_fp(stderr);
+        client->close_ssl_conn();
+        return -4;
+    }
+    return 1;
+}
+
 int gs_connect_to_server(NetDataClient *network_data)
 {
     int connect_status = -1;
 
-    dbprintlf(BLUE_FG "Attempting connection to %s.", SERVER_IP);
+    dbprintlf(BLUE_FG "Attempting connection to %s.", network_data->ip_addr);
 
     // This is already done when initializing network_data.
     // network_data->serv_ip->sin_port = htons(server_port);
-    if ((network_data->socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    if ((network_data->_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         dbprintlf(RED_FG "Socket creation error.");
         connect_status = -1;
     }
-    else if (inet_pton(AF_INET, SERVER_IP, &network_data->server_ip->sin_addr) <= 0)
+    else if (inet_pton(AF_INET, network_data->ip_addr, &network_data->server_ip->sin_addr) <= 0)
     {
         dbprintlf(RED_FG "Invalid address; address not supported.");
         connect_status = -2;
     }
-    else if (gs_connect(network_data->socket, (struct sockaddr *)network_data->server_ip, sizeof(network_data->server_ip), 1) < 0)
+    else if (gs_connect(network_data->_socket, (struct sockaddr *)network_data->server_ip, sizeof(network_data->server_ip), 1) < 0)
     {
         dbprintlf(RED_FG "Connection failure.");
         connect_status = -3;
@@ -601,10 +1004,36 @@ int gs_connect_to_server(NetDataClient *network_data)
         struct timeval timeout;
         timeout.tv_sec = RECV_TIMEOUT;
         timeout.tv_usec = 0;
-        setsockopt(network_data->socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof timeout);
+        setsockopt(network_data->_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof timeout);
 
         network_data->connection_ready = true;
         connect_status = 1;
+
+        NetFrame *frame = new NetFrame((uint8_t *)network_data->GetAuthToken()->GetBytes(), SHA512_DIGEST_LENGTH, NetType::SRV, NetVertex::SERVER);
+        if (frame->sendFrame(network_data) <= 0)
+        {   delete frame;
+            dbprintlf("Could not send auth token");
+            network_data->Close();
+            return -2;
+        }
+        delete frame;
+        usleep(10000);
+        frame = new NetFrame();
+        if (frame->recvFrame(network_data) <= 0)
+        {
+            delete frame;
+            dbprintlf("Could not receive token ACK/NACK");
+            network_data->Close();
+            return -3;
+        }
+        if (frame->getType() == NetType::NACK || frame->getOrigin() != NetVertex::SERVER)
+        {
+            dbprintlf("Received frame type: %d | Origin: %d", (int) frame->getType(), (int) frame->getOrigin());
+            delete frame;
+            network_data->Close();
+            return -4;
+        }
+        delete frame;
     }
 
     return connect_status;
