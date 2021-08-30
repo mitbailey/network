@@ -97,7 +97,7 @@ public:
     int polling_rate; // POLL frame sent to the server every this-many seconds.
     char disconnect_reason[64];
     struct sockaddr_in server_ip[1];
-    
+
     friend int gs_connect_to_server(NetDataClient *);
 };
 
@@ -140,6 +140,7 @@ public:
     NetClient *GetClient(int id);
     NetClient *GetClient(NetVertex target);
     void StopAccept() { listen_done = true; };
+    const bool Accepting() const { return !listen_done; };
 
     const sha1_hash_t *GetAuthToken() const { return auth_token; };
 
