@@ -867,7 +867,8 @@ int gs_accept(NetDataServer *serv, int client_id)
 #ifndef __linux__
     setsockopt(client->_socket, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
 #endif
-
+    NetFrame *testframe = new NetFrame();
+    dbprintlf("Received bytes: %d", testframe->recvFrame(client));
     // accept SSL connection
     if (gs_accept_ssl(client) < 0)
     {
@@ -1083,6 +1084,10 @@ int gs_connect_to_server(NetDataClient *network_data)
         setsockopt(network_data->_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof timeout);
 
         network_data->connection_ready = true;
+
+        NetFrame *testframe = new NetFrame(NULL, 0, NetType::POLL, NetVertex::SERVER);
+        dbprintlf("Sent bytes: %d", testframe->sendFrame(network_data));
+        delete testframe;
 
         if (network_data->open_ssl_conn() < 0)
         {
