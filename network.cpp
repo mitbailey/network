@@ -959,6 +959,8 @@ int gs_accept(NetDataServer *serv, int client_id)
         return -1;
     }
 
+    client->ssl_ready = true;
+
     return 1;
 }
 
