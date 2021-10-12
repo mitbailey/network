@@ -48,11 +48,16 @@ enum class NetVertex
 
 enum class NetPort
 {
-    CLIENT = 54200,
-    ROOFUHF = 54210,
-    ROOFXBAND = 54220,
-    HAYSTACK = 54230,
-    TRACK = 54240
+    // CLIENT = 54200,
+    // ROOFUHF = 54210,
+    // ROOFXBAND = 54220,
+    // HAYSTACK = 54230,
+    // TRACK = 54240
+    CLIENT = 52000,
+    ROOFUHF = 52010,
+    ROOFXBAND = 52020,
+    HAYSTACK = 52030,
+    TRACK = 52040
 };
 
 class NetData
