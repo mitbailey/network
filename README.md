@@ -1,3 +1,5 @@
+Deprecated, superseded by https://github.com/sunipkm/network.
+
 # Network
 SPACE-HAUC Ground Station common network files.
 
